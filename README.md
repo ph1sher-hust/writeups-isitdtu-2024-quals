@@ -736,7 +736,7 @@ Can see some char: `ISITDTU{`, `LAB_PPUDATA_8567` like as `printf`
 
 We can observe a loop that iterates 43 times, processing each character of the data set with the DAT value we just found as `tuanlinhlinhtuan`.
 
-Yah, i guessing this data (because it has exactly 43 in length :>>>)
+The pointer to the data was named `DAT_0310` in Ghidra so I checked the memory viewer in `Mesen` at address `0310` and found this:
 
 ![image](https://hackmd.io/_uploads/rkl5Qjiekg.png)
 
@@ -767,6 +767,59 @@ ISITDTU{Throw_back_the_nested_if_NES_have_funnnn_:)}
 
 ### The Chamber of Flag
 ![image](https://hackmd.io/_uploads/r19kl2olkl.png)
+The first thing we have to bypass is the first check pass after we chooses `Login` option
+
+![image](https://hackmd.io/_uploads/r1TjQtRxke.png)
+
+We found the code at here, it use sha256 algorithm to encrypt the password
+
+![image](https://hackmd.io/_uploads/Bkc0EtAxJl.png)
+
+And the ciphertext here
+
+![image](https://hackmd.io/_uploads/H1jIrtRxke.png)
+
+After decrypt we got password
+![image](https://hackmd.io/_uploads/BJKdrYRxJe.png)
+
+In the next step, i try 5 options but only the option `flag` looks explorable, and finally i found the piece of code
+
+![image](https://hackmd.io/_uploads/HkIQ8KCgkg.png)
+
+But somehow the buffer of the flag isn't true, and we decide to look for it in the whole program, and when i look in the buffer `szNiceCatchFlag`, i found some bytes that may work, and they have 0xCAFE each 16 bytes, so i decide to combine 16 bytes into the full buffer 64 bytes
+
+![image](https://hackmd.io/_uploads/rJfBwtCxke.png)
+
+```
+from Crypto.Cipher import AES
+from binascii import unhexlify
+
+
+key_hex = "26F2D45844BFDBC8E5A2AE67149AA6C50E897A2A48FBF479D1BFB9F0D4E24544"
+iv_hex = "FF07ECD94D4435DB29DA952F2FC753C4"
+ciphertext = [162, 175, 250, 94, 179, 80, 150, 111, 168, 185, 13, 43, 110, 149, 211, 85, 
+              5, 201, 8, 139, 144, 81, 167, 197, 206, 129, 184, 128, 148, 144, 155, 34, 
+              176, 70, 176, 126, 50, 165, 109, 161, 123, 174, 99, 29, 232, 51, 198, 239, 
+              207, 205, 23, 57, 50, 9, 213, 10, 17, 221, 246, 30, 111, 48, 166, 3]
+
+
+key = unhexlify(key_hex)
+iv = unhexlify(iv_hex)
+
+
+ciphertext_bytes = bytes(ciphertext)
+
+
+cipher = AES.new(key, AES.MODE_CBC, iv)
+plaintext = cipher.decrypt(ciphertext_bytes)
+
+
+print("Plaintext:", plaintext)
+```
+
+And we got this
+![image](https://hackmd.io/_uploads/BksKwYRlkl.png)
+
 
 
 
@@ -894,11 +947,115 @@ This challenge is the same as the previous one but with a small modification: we
 
 ![image](https://hackmd.io/_uploads/SkuKTjseJx.png)
 
+The solution here is to send 32th root of unitities to the server and caculate the sum of the returned numbers. The we can divide the result by 32 and we get a0. With a bit of luck, we can get flag :v
+```python
+from pwn import *
+from Crypto.Util.number import *
+from sage.all import *
+while True:
+    r = remote('35.187.238.100',5002)
+    r.recvuntil(b'= ')
+    p = eval(r.readline())
+    R = Zmod(p)
+    P = PolynomialRing(R,'x')
+    x = P.gens()[0]
+    r.recvuntil(b": ")
+    q = list(map(int,(x**32 - 1).roots(multiplicities = false)))
+    print(f"{len(q) = }")
+    if len(q) != 32:
+        continue
+    r.sendline(" ".join(map(str, q)).encode())
+    line = r.readlineS().strip()
+    value_str = line.split("= ")[1]
+    value = eval(value_str)
+    mapped_values = map(P, value)
+    summed_value = sum(mapped_values)
+    divided_value = int(summed_value / 32)
+    flag = long_to_bytes(divided_value)
+    print(flag)
+    if b"ISITDTU{" in flag:
+        print(f"{flag = }")
+        break
 
+```
+```
+ISITDTU{M1x_4941n!_73360d0e5fb4}
+```
+    
 
 ## Forensics
 ### CPUsage
 ### Corrupted Hard Drive
+![image](https://hackmd.io/_uploads/rkP3TPnxyx.png)
+
+1. Analysis Phase
+
+This challenge requires us to address a series of questions to uncover the flag. I'll proceed through each question systematically.
+
+#### Detailed Walkthrough
+> Q1. What is the starting address of the LBA address? Format (0xXXXXX)
+
+The LBA (Logical Block Addressing) starting address is determined by the offset from the beginning of the disk to the first sector of the partition.
+
+Upon examining the disk structure, I located the partition starting at sector 128. This translates to a starting address of `0x10000`, which is our answer.
+
+> Q2. What is the tampered OEM ID? Format (0xXXXXXXXXXXXXXXXX)
+
+In this task, our goal is to identify the OEM ID. The OEM ID is a unique string indicating the file system type, like NTFS, exFAT, etc.
+
+It is typically located at offset 3 in the file system structure, where we can inspect it to find any alterations.
+
+Here’s an example of how to locate the OEM ID. To do this, I used HxD to open the disk file and navigated to the byte at offset 3.
+
+Answer: `0x4E54460020202020`
+
+> Q3. After Fixing the disk, my friend downloaded a file from Google, what is the exact time when he clicked to download that file?
+
+I suspect the files might have been renamed based on the download timestamp. Nonetheless, opening Autopsy and navigating to the "Web Downloads" feature should help us verify this.
+
+![image](https://hackmd.io/_uploads/HyIOxO3eyx.png)
+
+From there, we identify the file as `Blue_Team_Notes.pdf`, located within the `MustRead` folder. Let’s navigate to it.
+
+![image](https://hackmd.io/_uploads/Bkc2xOne1e.png)
+
+We'll take the Created Time and convert it to UTC, resulting in: `2024-10-22 21:51:13`.
+
+> Q4. How much time did that file take to for download (in seconds)??
+
+For this question, I know that during a download, a temporary file like `.crdownload` is created. We can parse both `$LogFile` and `$UsnJrnl` to trace this process. In this challenge, I opted to use `$LogFile`.
+
+Upon inspection, I noticed a discrepancy in the timestamps, which likely provides the answer.
+
+![image](https://hackmd.io/_uploads/rkBSZdneye.png)
+
+(I ended up brute-forcing the timestamp since locating the exact column became tedious) --> Answer: `126`
+
+> Q5. The first directory he moved this file to?
+
+In this challenge, I used the remove method, knowing that the `MustRead` folder is a carved folder, which indicates it was likely deleted. This left me with two options: `best` and `secret`. I tried both and found the answer to be: `best`
+
+> Q6. Last directory the suspicious move the file to?
+
+As mentioned, the final directory where we located the PDF file is the `MustRead` folder — making `MustRead` the answer.
+
+> Q7. The time he of the deletion??
+
+I used `$UsnJrnl` because this file logs creation, deletion, and modification activities for files and directories, making it a valuable source of information.
+
+Tool used: [UsnJrnl2Csv](https://github.com/jschicht/UsnJrnl2Csv)
+
+To parse the file, we utilized the search shortcut for efficient findings.
+
+![image](https://hackmd.io/_uploads/HkopGdnlke.png)
+
+
+Answer: `2024-10-22 22:20:28`
+
+```
+ISITDTU{https://www.youtube.com/watch?v=yqp61_Wqm-A}
+```
+
 ### Initial
 
 
